@@ -74,7 +74,7 @@ Resources:
           result:
             - SUCCESS
           repository-name:
-            - !Sub '${EnvironmentName}-${AppName}/ecommerce-web'
+            - !Sub '${EnvironmentName}-${AppName}/core'
           image-tag:
             - !Sub '${EnvironmentName}-latest'
       Targets:

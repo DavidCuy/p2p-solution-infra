@@ -55,7 +55,7 @@ Resources:
   ContainerRegistry:
     Type: AWS::ECR::Repository
     Properties:
-      RepositoryName: !Sub '${EnvironmentName}-${AppName}/ecommerce-web'
+      RepositoryName: !Sub '${EnvironmentName}-${AppName}/core'
       ImageTagMutability: 'MUTABLE'
       ImageScanningConfiguration:
         ScanOnPush: true
@@ -108,7 +108,7 @@ Resources:
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Sub '${EnvironmentName}-${AppName}-ecommerce-cluster'
+      ClusterName: !Sub '${EnvironmentName}-${AppName}-core-cluster'
       ClusterSettings:
         - Name: containerInsights
           Value: enabled
@@ -154,12 +154,12 @@ Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+      LogGroupName: !Sub '${EnvironmentName}-${AppName}-core'
   
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
-      Family: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+      Family: !Sub '${EnvironmentName}-${AppName}-core'
       Cpu: !FindInMap 
         - !Ref EnvironmentName
         - TaskDefinition
@@ -173,7 +173,7 @@ Resources:
         - FARGATE
       ExecutionRoleArn: !Ref ECSTaskExecutionRole
       ContainerDefinitions:
-        - Name: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+        - Name: !Sub '${EnvironmentName}-${AppName}-core'
           Cpu: !FindInMap 
           - !Ref EnvironmentName
           - TaskDefinition
@@ -302,8 +302,8 @@ Resources:
     Type: AWS::ECS::Service
     DependsOn: PublicLoadBalancerListener
     Properties:
-      ServiceName: !Sub '${EnvironmentName}-${AppName}-ecommerce'
-      Cluster: !Sub '${EnvironmentName}-${AppName}-ecommerce-cluster'
+      ServiceName: !Sub '${EnvironmentName}-${AppName}-core'
+      Cluster: !Sub '${EnvironmentName}-${AppName}-core-cluster'
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -321,7 +321,7 @@ Resources:
       DesiredCount: !Ref DesiredCount
       TaskDefinition: !Ref TaskDefinition
       LoadBalancers:
-        - ContainerName: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+        - ContainerName: !Sub '${EnvironmentName}-${AppName}-core'
           ContainerPort: !Ref ContainerPort
           TargetGroupArn: !Ref ServiceTargetGroup
 
