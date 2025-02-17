@@ -32,13 +32,13 @@ Parameters:
 Mappings:
   LaunchTemplate:
     dev:
-      ImageId: ami-06744fbd0847bf4f5
+      ImageId: ami-04681163a08179f28
     qa:
-      ImageId: ami-07c65f0fc562b275d
+      ImageId: ami-04681163a08179f28
     staging:
-      ImageId: ami-06744fbd0847bf4f5
+      ImageId: ami-04681163a08179f28
     prod:
-      ImageId: ami-043a5a82b6cf98947
+      ImageId: ami-04681163a08179f28
 
 Resources:
   KeyPairBastion:
