@@ -1,0 +1,260 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::LanguageExtensions'
+Description: This template deploys a VPC
+Parameters:
+  EnvironmentName:
+    Description: Specify the Environment type of the stack.
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - qa
+      - staging
+      - prod
+  AppName:
+    Type: String
+    ConstraintDescription: '[a-z]+'
+    Description: The project name.
+  Name:
+    Type: String
+    Description: Name to identify
+
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: AWS::SSM::Parameter::Value<String>
+
+  PrivateSubnetNames:
+    Type: CommaDelimitedList
+    Description: List of IP range (CIDR notation) for the private subnet in the first Availability Zone
+
+  PublicSubnetNames:
+    Type: CommaDelimitedList
+    Description: List of IP range (CIDR notation) for the public subnet in the first Availability Zone
+
+Mappings:
+  AvailabilityZone:
+    A:
+      Index: 0
+    B:
+      Index: 1
+    C:
+      Index: 2
+  PrivateSubnetsMap:
+    A:
+      Index: 0
+    B:
+      Index: 1
+    C:
+      Index: 2
+  PublicSubnetsMap:
+    A:
+      Index: 3
+    B:
+      Index: 4
+    C:
+      Index: 5
+  PrivateSubnetCidrBlock:
+    dev:
+      A: 10.43.73.0/24
+      B: 10.43.126.0/24
+      C: 10.43.60.0/24
+    qa:
+      A: 10.40.111.0/24
+      B: 10.40.121.0/24
+      C: 10.40.131.0/24
+    prod:
+      A: 10.37.112.0/24
+      B: 10.37.122.0/24
+      C: 10.37.133.0/24
+  PublicSubnetCidrBlock:
+    dev:
+      A: 10.43.139.0/24
+      B: 10.43.94.0/24
+      C: 10.43.230.0/24
+    qa:
+      A: 10.40.211.0/24
+      B: 10.40.221.0/24
+      C: 10.40.231.0/24
+    prod:
+      A: 10.37.212.0/24
+      B: 10.37.222.0/24
+      C: 10.37.233.0/24
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: True
+      EnableDnsHostnames: True
+      InstanceTenancy: default
+      Tags:
+      - Key: Name
+        Value: !Sub '${Name}-vpc'
+  Ipv6CidrBlock:
+    Type: AWS::EC2::VPCCidrBlock
+    Properties:
+      VpcId: !Ref VPC
+      AmazonProvidedIpv6CidrBlock: true
+  
+  # SSM VPC Parameters
+  'Fn::ForEach::PrivateSubnetsSSM':
+    - SubnetName
+    - !Ref PrivateSubnetNames
+    - 'SSMCidrNetworkPrivateSubnet${SubnetName}':
+        Type: 'AWS::SSM::Parameter'
+        DependsOn: Ipv6CidrBlock
+        Properties:
+          Name: !Sub '/config/infra/${EnvironmentName}/${AppName}/vpc-networking/cidr-private-subnet/${SubnetName}'
+          Tier: Standard
+          Type: String
+          Value: !Select
+            - !FindInMap
+              - PrivateSubnetsMap
+              - !Ref SubnetName
+              - Index
+            - !Cidr [ !Select [ 0, !GetAtt VPC.Ipv6CidrBlocks], 6, 64 ]
+  'Fn::ForEach::PublicSubnetsSSM':
+    - SubnetName
+    - !Ref PublicSubnetNames
+    - 'SSMCidrNetworkPublicSubnet${SubnetName}':
+        Type: 'AWS::SSM::Parameter'
+        DependsOn: Ipv6CidrBlock
+        Properties:
+          Name: !Sub '/config/infra/${EnvironmentName}/${AppName}/vpc-networking/cidr-public-subnet/${SubnetName}'
+          Tier: Standard
+          Type: String
+          Value: !Select
+            - !FindInMap
+              - PublicSubnetsMap
+              - !Ref SubnetName
+              - Index
+            - !Cidr [ !Select [ 0, !GetAtt VPC.Ipv6CidrBlocks], 6, 64 ]
+
+  #PRIVATE SUBNETS
+  'Fn::ForEach::PrivateSubnetsLoop':
+    - SubnetName
+    - !Ref PrivateSubnetNames
+    - 'Fn::ForEach::GetAttLoop':
+      - Property
+      - [Value]
+      - 'PrivateSubnet${SubnetName}':
+          Type: AWS::EC2::Subnet
+          Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select
+              - !FindInMap
+                - AvailabilityZone
+                - !Ref SubnetName
+                - Index
+              - !GetAZs
+            CidrBlock: !FindInMap [PrivateSubnetCidrBlock, !Ref EnvironmentName, !Ref SubnetName]
+            MapPublicIpOnLaunch: false
+            Ipv6CidrBlock: !GetAtt
+              - !Sub 'SSMCidrNetworkPrivateSubnet${SubnetName}'
+              - !Ref Property
+            Tags:
+            - Key: Name
+              Value: !Sub '${Name}-private-subnet-${SubnetName}'
+  
+  'Fn::ForEach::PrivateSubnetsOutputSSM':
+    - SubnetName
+    - !Ref PrivateSubnetNames
+    - 'Fn::ForEach::GetAttLoop':
+      - Property
+      - [SubnetId]
+      - 'Private${Property}${SubnetName}':
+          Type: AWS::SSM::Parameter
+          Properties:
+            Name: !Sub "/config/infra/${EnvironmentName}/${AppName}/private_subnet/${SubnetName}"
+            Type: String
+            Value: !GetAtt 
+              - !Sub 'PrivateSubnet${SubnetName}'
+              - !Ref Property
+  
+  #PUBLIC SUBNETS
+  'Fn::ForEach::PublicSubnetsLoop':
+    - SubnetName
+    - !Ref PublicSubnetNames
+    - 'Fn::ForEach::GetAttLoop':
+      - Property
+      - [Value]
+      - 'PublicSubnet${SubnetName}':
+          Type: AWS::EC2::Subnet
+          Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select
+              - !FindInMap
+                - AvailabilityZone
+                - !Ref SubnetName
+                - Index
+              - !GetAZs
+            CidrBlock: !FindInMap [PublicSubnetCidrBlock, !Ref EnvironmentName, !Ref SubnetName]
+            MapPublicIpOnLaunch: true
+            Ipv6CidrBlock: !GetAtt
+              - !Sub 'SSMCidrNetworkPublicSubnet${SubnetName}'
+              - !Ref Property
+            Tags:
+            - Key: Name
+              Value: !Sub '${Name}-public-subnet-${SubnetName}'
+  
+  'Fn::ForEach::PublicSubnetsOutputSSM':
+    - SubnetName
+    - !Ref PublicSubnetNames
+    - 'Fn::ForEach::GetAttLoop':
+      - Property
+      - [SubnetId]
+      - 'Public${Property}${SubnetName}':
+          Type: AWS::SSM::Parameter
+          Properties:
+            Name: !Sub "/config/infra/${EnvironmentName}/${AppName}/public_subnet/${SubnetName}"
+            Type: String
+            Value: !GetAtt 
+              - !Sub 'PublicSubnet${SubnetName}'
+              - !Ref Property
+
+  VPCParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/config/infra/${EnvironmentName}/${AppName}/vpc_id"
+      Type: String
+      Value: !Ref VPC
+  
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for service
+      VpcId: !Ref VPC
+
+Outputs:
+  StackName:
+    Value: !Sub '${AWS::StackName}'
+
+  VPCID:
+    Value: !Ref VPC
+
+  VPCCIDR:
+    Value: !Ref VpcCIDR
+    Description: Data VPC CIDR
+  
+  ServiceSGId:
+    Description: The ECS service security group associated
+    Value: !GetAtt ServiceSecurityGroup.GroupId
+
+  'Fn::ForEach::PrivateSubnetOutputs':
+    - SubnetName
+    - !Ref PrivateSubnetNames
+    - 'Fn::ForEach::GetAttLoop':
+        - Property
+        - [SubnetId]
+        - 'Private${Property}${SubnetName}Out':
+            Value: !GetAtt [!Sub 'PrivateSubnet${SubnetName}', !Ref Property]
+
+  'Fn::ForEach::PublicSubnetOutputs':
+    - SubnetName
+    - !Ref PublicSubnetNames
+    - 'Fn::ForEach::GetAttLoop':
+        - Property
+        - [SubnetId]
+        - 'Public${Property}${SubnetName}Out':
+            Value: !GetAtt [!Sub 'PublicSubnet${SubnetName}', !Ref Property]

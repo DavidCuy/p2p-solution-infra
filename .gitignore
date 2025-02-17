@@ -1,0 +1,7 @@
+.idea
+.DS_Store
+.vscode
+.secrets
+eventParams.json
+*venv/*
+*.env

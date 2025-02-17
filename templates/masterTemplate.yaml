@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Database Networking Infra
+Parameters:
+  EnvironmentName:
+    Type: String
+    Description: Environment of the account.
+  AppName:
+    Type: AWS::SSM::Parameter::Value<String>
+    Description: App Name.
+  VpcNamesForPrivate:
+    Type: String
+    Description: List for names of private subnets
+    Default: 'A,B,C'
+  VpcNamesForPublic:
+    Type: String
+    Description: List for names of public subnets
+    Default: 'A'
+  VpcEnableS3Gateway:
+    Type: String
+    Description: Flag to create a vpc endpoint between nat gateway and s3
+    AllowedValues:
+         - 'true'
+         - 'false'
+  RdsInstanceClass:
+    Type: String
+    Description: Name of the instance of Rds. See allowed values at https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.Types.html
+    Default: 'db.t3.micro'
+  RdsStorageGib:
+    Type: Number
+    Description: Storage size in Gib.
+    Default: 20
+  RdsEngine:
+    Type: String
+    Description: Name of the databases engine. See allowed values at https://docs.aws.amazon.com/cli/latest/reference/rds/describe-db-engine-versions.html
+    Default: 'postgres'
+  RdsVersion:
+    Type: String
+    Description: Version of the database engine
+    Default: '16.4'
+  DbName:
+    Type: String
+    Description: Name of the database to create.
+    Default: 'generic_db'
+  DbUserName:
+    Type: String
+    Description: Username for the database access.
+    NoEcho: 'true'
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: Must begin with a letter and contain only alphanumeric characters
+    Default: 'dbadminUser'
+  DbPort:
+    Type: String
+    Description: Port for the database access.
+    Default: '5432'
+
+  EC2CreateBastion:
+    Type: String
+    Description: Whether to create a bastion host for EC2 instances.
+    Default: 'false'
+    AllowedValues:
+       - 'true'
+       - 'false'
+  Ec2SshPort:
+    Type: Number
+    Description: SSH port for the EC2 instances.
+    Default: 22
+  
+  CertificateSet:
+    Type: String
+    Description: Whether to indicate if certificate was set.
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  CreateBastion: !Equals ['true', !Ref EC2CreateBastion]
+
+Resources:
+  StackVPCNetwork:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/networking/vpc.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AppName: !Ref AppName
+        Name: !Sub ${EnvironmentName}-${AppName}-network
+        VpcCIDR: !Sub /config/infra/${EnvironmentName}/${AppName}/vpc-networking/cidr
+        PrivateSubnetNames: !Ref VpcNamesForPrivate
+        PublicSubnetNames: !Ref VpcNamesForPublic
+      TimeoutInMinutes: 60
+
+  StackNatIG:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/networking/nat-ig-gateways.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AppName: !Ref AppName
+        Name: !Sub ${EnvironmentName}-${AppName}-network-nat
+        VPCID: !GetAtt StackVPCNetwork.Outputs.VPCID
+        PublicSubnets: !Ref VpcNamesForPublic
+      TimeoutInMinutes: 60
+
+  StackAccessNetworkRules:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/networking/access-rules.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AppName: !Ref AppName
+        Name: !Sub ${EnvironmentName}-${AppName}-Networking
+        VPCID: !GetAtt StackVPCNetwork.Outputs.VPCID
+        VpcEnableS3Gateway: !Ref VpcEnableS3Gateway
+        VpcStackName: !GetAtt StackVPCNetwork.Outputs.StackName
+        InternetGateway: !GetAtt StackNatIG.Outputs.InternetGateway
+        PrivateSubnets: !Ref VpcNamesForPrivate
+        PublicSubnets: !Ref VpcNamesForPublic
+      TimeoutInMinutes: 60
+  
+  StackBastion:
+    Condition: CreateBastion
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/bastion.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AppName: !Ref AppName
+        Name: !Sub ${EnvironmentName}-${AppName}-Business
+        VPCData: !GetAtt StackVPCNetwork.Outputs.VPCID
+        KeyPairSSM: !Sub '/config/infra/${EnvironmentName}/${AppName}/key-pair'
+        SourceCidr: 0.0.0.0/0
+        SshPort: !Ref Ec2SshPort
+      TimeoutInMinutes: 60
+  
+  StackRDS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/rds.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AppName: !Ref AppName
+        Name: !Sub ${EnvironmentName}-${AppName}-Data
+        BastionSG: !If [CreateBastion, !GetAtt StackBastion.Outputs.BastionSG, '-']
+        BastionCreated: !Ref EC2CreateBastion
+        BusinessSG: !GetAtt StackAccessNetworkRules.Outputs.SG
+        ApplicationSG: !GetAtt StackVPCNetwork.Outputs.ServiceSGId
+        VPCData: !GetAtt StackVPCNetwork.Outputs.VPCID
+
+        RdsInstanceClass: !Ref RdsInstanceClass
+        RdsStorageGib: !Ref RdsStorageGib
+        RdsEngine: !Ref RdsEngine
+        RdsVersion: !Ref RdsVersion
+        DbName: !Ref DbName
+        DbUserName: !Ref DbUserName
+        DbPort: !Ref DbPort
+      TimeoutInMinutes: 60
+  
+  StackContainers:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - StackVPCNetwork
+      - StackNatIG
+      - StackAccessNetworkRules
+    Properties:
+      TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/containers/containers.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AppName: !Ref AppName
+        VPCData: !GetAtt StackVPCNetwork.Outputs.VPCID
+        ApplicationSG: !GetAtt StackVPCNetwork.Outputs.ServiceSGId
+        CertificateSet: !Ref CertificateSet
+      TimeoutInMinutes: 60
+  
+  StackEventsLambdas:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/lambdas/events_infra.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AppName: !Ref AppName
+        ECSServiceName: !GetAtt StackContainers.Outputs.ServiceName
+        ECSClusterName: !GetAtt StackContainers.Outputs.ClusterName
+        ECSServiceArn: !GetAtt StackContainers.Outputs.ServiceArn
+      TimeoutInMinutes: 60
+
+  
+  

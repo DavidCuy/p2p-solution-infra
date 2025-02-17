@@ -1,0 +1,26 @@
+[project.definition]
+name = "p2p-solution"
+description = "Despliegue de la infraestructura de p2p solution"
+
+[networking.config.vpc]
+names_for_private = 'A,B,C' # Use comma delimeter to separate names. Use max 3 elements
+names_for_public = 'A,B' #  Use comma delimeter to separate names. Use max 3 elements
+enable_s3_gateway = 'true'
+[networking.config.vpc.dev]
+cidr = "10.43.0.0/16"
+[networking.config.vpc.qa]
+cidr = "10.40.0.0/16"
+[networking.config.vpc.prod]
+cidr = "10.37.0.0/16"
+
+[rds.database]
+engine = "postgres"
+version = "16.4"
+
+[rds.database.config]
+db_name = "p2p_solution_db"
+db_user_name = "p2pAdminUser"
+db_port = "5432"
+
+[ec2.bastion]
+ssh_port = 2345

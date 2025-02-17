@@ -1,0 +1,345 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  EnvironmentName:
+    Type: String
+  AppName:
+    Type: String
+  VPCData:
+    Description: VPCID of data
+    Type: String
+  ApplicationSG:
+    Type: String
+  ECSAMI:
+    Description: The Amazon Machine Image ID used for the cluster
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id #AMI IMAGES https://docs.aws.amazon.com/AmazonECS/latest/developerguide/retrieve-ecs-optimized_AMI.html
+  ContainerPort:
+    Type: Number
+    Default: 80
+    Description: What port that the application expects traffic on
+  DesiredCount:
+    Type: Number
+    Default: 1
+    Description: How many copies of the service task to run
+  CertificateSet:
+    Type: String
+    Description: Whether to indicate if certificate was set.
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  IsProd: !Equals
+    - !Ref EnvironmentName
+    - prod
+  HttpsEnabled: !Equals
+    - !Ref CertificateSet
+    - 'true'
+
+Mappings:
+  dev:
+    TaskDefinition:
+      Cpu: 256
+      Memory: 512
+  qa:
+    TaskDefinition:
+      Cpu: 256
+      Memory: 512
+  prod:
+    TaskDefinition:
+      Cpu: 1024
+      Memory: 2048
+
+Resources:
+  ContainerRegistry:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${EnvironmentName}-${AppName}/ecommerce-web'
+      ImageTagMutability: 'MUTABLE'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EmptyOnDelete: !If [IsProd, true, false]
+      RepositoryPolicyText:
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Sid: AllowPushPull
+            Effect: Allow
+            Principal:
+              Service: 'ecs-tasks.amazonaws.com'
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetAuthorizationToken
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the previous untagged image, expire all others",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 1
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: 'environment'
+          Value: !Ref EnvironmentName
+        - Key: 'app'
+          Value: !Ref AppName
+  
+  ContainerRegistrySSM:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !Sub '/${EnvironmentName}/${AppName}/container/registry/repository/url'
+      Tier: Standard
+      Type: String
+      Value: !GetAtt ContainerRegistry.RepositoryUri
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${EnvironmentName}-${AppName}-ecommerce-cluster'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: 'environment'
+          Value: !Ref EnvironmentName
+        - Key: 'app'
+          Value: !Ref AppName
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:*
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: !Sub '${EnvironmentName}-${AppName}-ecs-task-pull-ecr'
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetAuthorizationToken
+                Resource:
+                  - !GetAtt ContainerRegistry.Arn
+  
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+  
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+      Cpu: !FindInMap 
+        - !Ref EnvironmentName
+        - TaskDefinition
+        - Cpu
+      Memory: !FindInMap 
+        - !Ref EnvironmentName
+        - TaskDefinition
+        - Memory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      ContainerDefinitions:
+        - Name: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+          Cpu: !FindInMap 
+          - !Ref EnvironmentName
+          - TaskDefinition
+          - Cpu
+          Memory: !FindInMap 
+          - !Ref EnvironmentName
+          - TaskDefinition
+          - Memory
+          Image: !Sub '${ContainerRegistry.RepositoryUri}:${EnvironmentName}-latest' 
+          LinuxParameters:
+            InitProcessEnabled: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              HostPort: !Ref ContainerPort
+          LogConfiguration:
+            LogDriver: 'awslogs'
+            Options:
+              mode: non-blocking
+              max-buffer-size: 25m
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  PublicLoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the public facing load balancer
+      # TODO: Si queremos separar las VPC, se tiene crear una para la aplicacion y conectarlas por medio de un VPCPeering connection
+      VpcId: !Ref VPCData
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: "tcp"
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: "0.0.0.0/0"
+  
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: '30'
+      Subnets:
+        Fn::Transform:
+          Name: 'read-ssm-from-path'
+          Parameters:
+            Path: !Sub '/config/infra/${EnvironmentName}/${AppName}/public_subnet/'
+      SecurityGroups:
+        - !Ref PublicLoadBalancerSG
+      IpAddressType: "dualstack"  # Habilita IPv4 e IPv6
+  
+  ServiceTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 150
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 120
+      HealthyThresholdCount: 2
+      TargetType: ip
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      # TODO: Si queremos separar las VPC, se tiene crear una para la aplicacion y conectarlas por medio de un VPCPeering connection
+      VpcId: !Ref VPCData
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 0
+  
+  # Listener for HTTP (Port 80)
+  PublicLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        !If
+        - HttpsEnabled
+        - 
+          Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: "443"
+            StatusCode: HTTP_301
+        - 
+          Type: 'forward'
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref ServiceTargetGroup
+                Weight: 100
+  
+  # Listener for HTTPS (Port 443)
+  PublicLoadBalancerListenerHttps:
+    Condition: HttpsEnabled
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PublicLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      DefaultActions:
+        - Type: 'forward'
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref ServiceTargetGroup
+                Weight: 100
+      Certificates:
+        - CertificateArn: !Sub '{{resolve:ssm:/config/infra/${EnvironmentName}/${AppName}/certificate/arn}}'
+  
+  ServiceIngressfromLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the public ALB
+      GroupId: !Ref ApplicationSG
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref PublicLoadBalancerSG
+
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: PublicLoadBalancerListener
+    Properties:
+      ServiceName: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+      Cluster: !Sub '${EnvironmentName}-${AppName}-ecommerce-cluster'
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ApplicationSG
+          Subnets:
+            Fn::Transform:
+              Name: 'read-ssm-from-path'
+              Parameters:
+                Path: !Sub '/config/infra/${EnvironmentName}/${AppName}/public_subnet/'
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref DesiredCount
+      TaskDefinition: !Ref TaskDefinition
+      LoadBalancers:
+        - ContainerName: !Sub '${EnvironmentName}-${AppName}-ecommerce'
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref ServiceTargetGroup
+
+Outputs:
+  ContainerRegistryUrl:
+    Description: The URL of the ECR repository
+    Value: !GetAtt ContainerRegistry.RepositoryUri
+  ContainerArn:
+    Value: !GetAtt ContainerRegistry.Arn
+  ClusterName:
+    Description: The ECS cluster into which to launch resources
+    Value: !Ref ECSCluster
+  ServiceName:
+    Description: The ECS cluster into which to launch resources
+    Value: !GetAtt ECSService.Name
+  ServiceArn:
+    Description: The ECS cluster into which to launch resources
+    Value: !Ref ECSService
+  ECSTaskExecutionRole:
+    Description: The role used to start up a task
+    Value: !Ref ECSTaskExecutionRole

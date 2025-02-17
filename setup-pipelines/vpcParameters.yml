@@ -1,0 +1,45 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::LanguageExtensions'
+Description: Save parameter used while creating stacks
+Parameters:
+  EnvironmentName:
+    Type: String
+    AllowedValues:
+      - dev
+      - qa
+      - staging
+      - prod
+  AppName:
+    Type: String
+  VpcCidr:
+    Type: String
+    Description: Network subnet for routing
+    Default: '10.61.0.0/16'
+
+Mappings:
+  Certificate:
+    dev:
+      Arn: "-"
+    qa:
+      Arn: "arn:aws:acm:us-east-2:183295411796:certificate/310b2693-804f-44c2-9e6c-c07df9fb375b"
+    staging:
+      Arn: "-"
+    prod:
+      Arn: "arn:aws:acm:us-east-1:183295411796:certificate/4ae6e2bd-37f9-4faf-b426-a00d9302db4b"
+
+Resources:
+  SSMVpcNetworkCidr:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !Sub '/config/infra/${EnvironmentName}/${AppName}/vpc-networking/cidr'
+      Tier: Standard
+      Type: String
+      Value: !Ref VpcCidr
+  SSMCertificateArn:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !Sub '/config/infra/${EnvironmentName}/${AppName}/certificate/arn'
+      Tier: Standard
+      Type: String
+      Value: !FindInMap [Certificate, !Ref EnvironmentName, Arn]
+  

@@ -1,0 +1,150 @@
+name: Deploy infra
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: 'environment to deploy'
+        required: true
+        options:
+          - dev
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  set-variables:
+    name: "Set Environment"
+    runs-on: ubuntu-latest
+    outputs:
+      app_name: ${{ steps.set-properties-variables.outputs.app_name }}
+      description: ${{ steps.set-properties-variables.outputs.description }}
+
+      vpc_cidr: ${{ steps.set-properties-variables.outputs.vpc_cidr }}
+      vpc_names_for_private: ${{ steps.set-properties-variables.outputs.vpc_names_for_private }}
+      vpc_names_for_public: ${{ steps.set-properties-variables.outputs.vpc_names_for_public }}
+      vpc_enable_s3_gateway: ${{ steps.set-properties-variables.outputs.vpc_enable_s3_gateway }}
+
+      rds_engine: ${{ steps.set-properties-variables.outputs.rds_engine }}
+      rds_version: ${{ steps.set-properties-variables.outputs.rds_version }}
+      
+      db_name: ${{ steps.set-properties-variables.outputs.db_name }}
+      db_user_name: ${{ steps.set-properties-variables.outputs.db_user_name }}
+      db_port: ${{ steps.set-properties-variables.outputs.db_port }}
+      
+      ec2_ssh_port: ${{ steps.set-properties-variables.outputs.ec2_ssh_port }}
+
+      mayus_env: ${{ steps.StringCase.outputs.uppercase }}
+      lower_env: ${{ steps.StringCase.outputs.lowercase }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+      - id: set-properties-variables
+        name: Set project properties variables
+        run: |
+          npm install
+          echo "app_name=$(bash read_from_properties.sh ./project_properties.toml project.definition.name)" >> $GITHUB_OUTPUT
+          echo "description=$(bash read_from_properties.sh ./project_properties.toml project.definition.description)" >> $GITHUB_OUTPUT
+          
+          echo "vpc_cidr=$(bash read_from_properties.sh ./project_properties.toml networking.config.vpc.${{ github.event.inputs.environment }}.cidr)" >> $GITHUB_OUTPUT
+          echo "vpc_names_for_private=$(bash read_from_properties.sh ./project_properties.toml networking.config.vpc.names_for_private)" >> $GITHUB_OUTPUT
+          echo "vpc_names_for_public=$(bash read_from_properties.sh ./project_properties.toml networking.config.vpc.names_for_public)" >> $GITHUB_OUTPUT
+          echo "vpc_enable_s3_gateway=$(bash read_from_properties.sh ./project_properties.toml networking.config.vpc.enable_s3_gateway)" >> $GITHUB_OUTPUT
+
+          echo "rds_engine=$(bash read_from_properties.sh ./project_properties.toml rds.database.engine)" >> $GITHUB_OUTPUT
+          echo "rds_version=$(bash read_from_properties.sh ./project_properties.toml rds.database.version)" >> $GITHUB_OUTPUT
+          
+          echo "db_name=$(bash read_from_properties.sh ./project_properties.toml rds.database.config.db_name)" >> $GITHUB_OUTPUT
+          echo "db_user_name=$(bash read_from_properties.sh ./project_properties.toml rds.database.config.db_user_name)" >> $GITHUB_OUTPUT
+          echo "db_port=$(bash read_from_properties.sh ./project_properties.toml rds.database.config.db_port)" >> $GITHUB_OUTPUT
+          echo "ec2_ssh_port=$(bash read_from_properties.sh ./project_properties.toml ec2.bastion.ssh_port)" >> $GITHUB_OUTPUT
+      - id: StringCase
+        uses: ASzc/change-string-case-action@v6
+        with:
+          string: ${{ github.event.inputs.environment }}
+  deploy-pipeline:
+    name: Deploy ${{ github.event.inputs.environment }} pipeline
+    environment: ${{ github.event.inputs.environment }}
+    needs: [set-variables]
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+
+      APP_NAME: ${{ needs.set-variables.outputs.app_name }}
+      VPC_CIDR: ${{ needs.set-variables.outputs.vpc_cidr }}
+      VPC_NAMES_FOR_PRIVATE: ${{ needs.set-variables.outputs.vpc_names_for_private }}
+      VPC_NAMES_FOR_PUBLIC: ${{ needs.set-variables.outputs.vpc_names_for_public }}
+      VPC_ENABLE_S3_GATEWAY: ${{ needs.set-variables.outputs.vpc_enable_s3_gateway }}
+      RDS_INSTANCE_CLASS: ${{ vars[format('{0}_RDS_INSTANCE_CLASS', needs.set-variables.outputs.mayus_env)] }}
+      RDS_STORE_GIB: ${{ vars[format('{0}_RDS_STORE_GIB', needs.set-variables.outputs.mayus_env)] }}
+      RDS_ENGINE: ${{ needs.set-variables.outputs.rds_engine }}
+      RDS_VERSION: ${{ needs.set-variables.outputs.rds_version }}
+      DB_NAME: ${{ needs.set-variables.outputs.db_name }}
+      DB_USER_NAME: ${{ needs.set-variables.outputs.db_user_name }}
+      DB_PORT: ${{ needs.set-variables.outputs.db_port }}
+      EC2_CREATE_BASTION: ${{ vars[format('{0}_EC2_CREATE_BASTION', needs.set-variables.outputs.mayus_env)] }}
+      EC2_SSH_PORT: ${{ needs.set-variables.outputs.ec2_ssh_port }}
+      CERTIFICATE_SET: ${{ vars[format('{0}_CERTIFICATE_SET', needs.set-variables.outputs.mayus_env)] }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+      - name: Configure AWS Credentials Role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[format('{0}_AWS_ROLE_TO_ASSUME', needs.set-variables.outputs.mayus_env)] }}
+          role-session-name: networking-infra
+          aws-region: ${{ secrets[format('{0}_AWS_REGION', needs.set-variables.outputs.mayus_env)] }}
+      - name:  Setup Parameters 
+        run: |
+          aws cloudformation deploy --template-file ./setup-pipelines/vpcParameters.yml --stack-name $APP_NAME-ssm-infrastructure-$ENVIRONMENT --parameter-overrides EnvironmentName=$ENVIRONMENT AppName=$APP_NAME VpcCidr="$VPC_CIDR" --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_NAMED_IAM CAPABILITY_IAM
+          
+          aws cloudformation deploy --template-file ./setup-pipelines/pipelines.yml --stack-name $APP_NAME-pipeline-infrastructure-$ENVIRONMENT --parameter-overrides EnvironmentName=$ENVIRONMENT AppName=$APP_NAME \
+                                    RdsInstanceClass=$RDS_INSTANCE_CLASS RdsStorageGib=$RDS_STORE_GIB RdsEngine=$RDS_ENGINE RdsVersion=$RDS_VERSION DbName=$DB_NAME DbUserName=$DB_USER_NAME DbPort=$DB_PORT CertificateSet=$CERTIFICATE_SET \
+                                    EC2CreateBastion="$EC2_CREATE_BASTION" Ec2SshPort=$EC2_SSH_PORT VpcNamesForPrivate="$VPC_NAMES_FOR_PRIVATE" VpcNamesForPublic="$VPC_NAMES_FOR_PUBLIC" VpcEnableS3Gateway="$VPC_ENABLE_S3_GATEWAY" \
+                                    --capabilities CAPABILITY_AUTO_EXPAND CAPABILITY_NAMED_IAM CAPABILITY_IAM
+  
+  
+  deploy:
+    name: Deploy ${{ github.event.inputs.environment }} AWS
+    environment: ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [set-variables, deploy-pipeline]
+    env: 
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+      APP_NAME: ${{ needs.set-variables.outputs.app_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+      - name: Configure AWS Credentials Role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[format('{0}_AWS_ROLE_TO_ASSUME', needs.set-variables.outputs.mayus_env)] }}
+          role-session-name: networking-infra-deploy
+          aws-region: ${{ secrets[format('{0}_AWS_REGION', needs.set-variables.outputs.mayus_env)] }}
+      - name: Install aws rain package
+        run: |
+          sudo apt install zip unzip
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          curl -L https://github.com/aws-cloudformation/rain/releases/download/v1.15.0/rain-v1.15.0_linux-amd64.zip --output rain-cli.zip
+
+          echo Unzipping rain-cli.zip file ...
+          unzip -o -q -d . rain-cli.zip
+
+          mv rain-v1.15.0_linux-amd64 rain-cli
+          ./rain-cli/rain --version
+      - name:  Upload templates to AWS
+        run: |
+          for t in $(find ./templates/lambdas -name '*.yaml' -or -name '*.json');
+            do
+              ./rain-cli/rain pkg $t --output $t
+            done
+          cd templates
+          zip masterTemplate.zip ./masterTemplate.yaml
+          cd ..
+          aws s3 cp templates s3://artifacts-$ENVIRONMENT-${{ secrets[format('{0}_AWS_REGION', needs.set-variables.outputs.mayus_env)] }}-${{ secrets[format('{0}_AWS_ACCOUNT_ID', needs.set-variables.outputs.mayus_env)] }}/$APP_NAME/deploys/networking-db/infra/ --recursive

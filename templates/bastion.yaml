@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  EnvironmentName:
+    Type: String
+  AppName:
+    Type: String
+  Name:
+    Type: String
+  KeyPairSSM:
+    Type: String
+  VPCData:
+    Description: VPCID of data
+    Type: String
+  SourceCidr:
+    Description: >-
+      What is the CIDR Block of IPv4 IP addresses allowed to access your Bastion
+      Host via SSH?
+    Type: String
+    AllowedPattern: >-
+      ^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?).){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(/([0-9]|[1-2][0-9]|3[0-2]))?$
+    ConstraintDescription: The value must be valid IPv4 CIDR block.
+    Default: 0.0.0.0/0
+  SshPort:
+    Description: >-
+      What port number would you like to use to connect to your Bastion Host
+      over SSH?
+    Type: Number
+    Default: 5210
+    MinValue: 22
+    MaxValue: 65535
+
+Mappings:
+  LaunchTemplate:
+    dev:
+      ImageId: ami-06744fbd0847bf4f5
+    qa:
+      ImageId: ami-07c65f0fc562b275d
+    staging:
+      ImageId: ami-06744fbd0847bf4f5
+    prod:
+      ImageId: ami-043a5a82b6cf98947
+
+Resources:
+  KeyPairBastion:
+    Type: AWS::EC2::KeyPair
+    Properties: 
+      KeyName: 'bastion-key-pair'
+      KeyType: 'rsa'
+  SSMKeyPairBastion:
+    Type: 'AWS::SSM::Parameter'
+    Properties:
+      Name: !Sub '${KeyPairSSM}'
+      Tier: Standard
+      Type: String
+      Value: !Ref KeyPairBastion
+
+  BastionSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupName: no-ingress-sg-Ec2
+      GroupDescription: Security group with no ingress rule for ec2
+      VpcId: !Ref VPCData
+  
+  BastionLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateData:
+        ImageId: !FindInMap
+          - LaunchTemplate
+          - !Ref EnvironmentName
+          - ImageId
+        IamInstanceProfile:
+          Arn: !GetAtt BastionInstanceProfile.Arn
+        InstanceType: t3.nano
+        SecurityGroupIds:
+          - !Ref BastionSG
+        KeyName: !Ref KeyPairBastion
+        BlockDeviceMappings: 
+          - DeviceName: /dev/xvda
+            Ebs: 
+              VolumeSize: 150
+              DeleteOnTermination: true
+        UserData: 
+          Fn::Base64: !Sub |
+            #!/bin/bash -x
+            yum install -y aws-cfn-bootstrap
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource myASG --region ${AWS::Region}
+
+
+  BastionASG:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AutoScalingGroupName: !Join
+        - '-'
+        - - !Ref Name
+          - BastionASG
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BastionLaunchTemplate
+        Version: !GetAtt BastionLaunchTemplate.LatestVersionNumber
+      VPCZoneIdentifier:
+        Fn::Transform:
+            Name: 'read-ssm-from-path'
+            Parameters:
+              Path: !Sub '/config/infra/${EnvironmentName}/${AppName}/public_subnet/'
+      MinSize: '1'
+      DesiredCapacity: '1'
+      MaxSize: '1'
+      Tags:
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - Name
+              - BastionHost
+          PropagateAtLaunch: true
+  SecurityGroupSshIngressRule:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Properties:
+      GroupId: !Ref BastionSG
+      IpProtocol: tcp
+      FromPort: !Ref SshPort
+      ToPort: !Ref SshPort
+      CidrIp: !Ref SourceCidr
+  BastionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: 'sts:AssumeRole'
+            Principal:
+              Service: ec2.amazonaws.com
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedEC2InstanceDefaultPolicy'
+  BastionPolicies:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: !Sub bastion-${AppName}-policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'ssm:StartSession'
+              - 'ssm:UpdateInstanceInformation'
+              - 'ssmmessages:CreateControlChannel'
+              - 'ssmmessages:CreateDataChannel'
+              - 'ssmmessages:OpenControlChannel'
+              - 'ssmmessages:OpenDataChannel'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 's3:GetEncryptionConfiguration'
+            Resource: '*'
+      Roles:
+        - !Ref BastionRole
+  BastionInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: /
+      Roles:
+        - !Ref BastionRole
+
+  BastionEI:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+
+
+Outputs:
+  BastionSG:
+    Description: Connection endpoint for the database
+    Value: !GetAtt BastionSG.GroupId
