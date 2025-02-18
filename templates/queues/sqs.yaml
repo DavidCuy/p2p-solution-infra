@@ -52,13 +52,30 @@ Resources:
       KmsMasterKeyId: !GetAtt KMSQueues.KeyId
       VisibilityTimeout: 1000
   
-  SSMP2PTransactionQueue:
+  SSMP2PTransactionQueueArn:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: !Sub "/${Environment}/${AppName}/p2p/transaction-queue"
+      Name: !Sub "/${Environment}/${AppName}/p2p/transaction-queue/arn"
       Tier: Standard
       Type: String
       Value: !GetAtt SQSP2PTransaction.Arn
+  
+  SSMP2PTransactionQueueName:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${Environment}/${AppName}/p2p/transaction-queue/name"
+      Tier: Standard
+      Type: String
+      Value: !GetAtt SQSP2PTransaction.QueueName
+  
+  SSMP2PTransactionQueueUrl:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${Environment}/${AppName}/p2p/transaction-queue/url"
+      Tier: Standard
+      Type: String
+      Value: !GetAtt SQSP2PTransaction.QueueUrl
+
 Outputs:
   SQSP2PTransactionUrl:
     Value: !Ref SQSP2PTransaction
