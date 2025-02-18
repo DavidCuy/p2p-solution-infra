@@ -40,6 +40,10 @@ Parameters:
     Type: String
     Default: "-"
   
+  EOInternetGateway:
+    Type: String
+    Default: "-"
+  
   VpcEnableS3Gateway:
     Type: String
     Description: Flag to create a vpc endpoint between nat gateway and s3
@@ -102,6 +106,13 @@ Resources:
       RouteTableId: !Ref PublicRouteTable
       DestinationIpv6CidrBlock: "::/0"
       GatewayId: !Ref InternetGateway
+  
+  EOInternetEgressAssociationIpv6:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationIpv6CidrBlock: "::/0"
+      GatewayId: !Ref EOInternetGateway
 
   ##############  Private subnet associations  ##############
   'Fn::ForEach::PrivateSubnetRouteTableAssociations':

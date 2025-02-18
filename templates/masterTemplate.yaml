@@ -116,6 +116,7 @@ Resources:
         VpcEnableS3Gateway: !Ref VpcEnableS3Gateway
         VpcStackName: !GetAtt StackVPCNetwork.Outputs.StackName
         InternetGateway: !GetAtt StackNatIG.Outputs.InternetGateway
+        EOInternetGateway: !GetAtt StackNatIG.Outputs.EOInternetGateway
         PrivateSubnets: !Ref VpcNamesForPrivate
         PublicSubnets: !Ref VpcNamesForPublic
       TimeoutInMinutes: 60

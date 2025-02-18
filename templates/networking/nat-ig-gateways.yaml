@@ -38,6 +38,11 @@ Resources:
     Properties:
       InternetGatewayId: !Ref InternetGateway
       VpcId: !Ref VPCID
+  
+  EgressOnlyInternetGateway: 
+    Type: AWS::EC2::EgressOnlyInternetGateway
+    Properties: 
+        VpcId: !Ref VPCID
 
 Outputs:
   StackName:
@@ -45,3 +50,6 @@ Outputs:
 
   InternetGateway:
     Value: !Ref InternetGateway
+  
+  EOInternetGateway:
+    Value: !Ref EgressOnlyInternetGateway
