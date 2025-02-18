@@ -447,4 +447,4 @@ Outputs:
     Value: !Ref ECSTaskExecutionRole
   ECSTaskRoleArn:
     Description: The role used by a task
-    Value: !Ref ECSTaskRole
+    Value: !GetAtt ECSTaskRole.Arn

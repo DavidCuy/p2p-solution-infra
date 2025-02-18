@@ -30,8 +30,7 @@ Resources:
         - Sid: Allow access for Key Administrators
           Effect: Allow
           Principal:
-            AWS:
-              - !Ref TaskRoleArn
+            AWS: !Ref TaskRoleArn
           Action: sqs:*
           Resource: "*"
 
