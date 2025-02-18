@@ -152,7 +152,7 @@ jobs:
     name: Deploy ${{ github.event.inputs.environment }} AWS
     environment: ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
-    needs: [set-variables, deploy-pipeline]
+    needs: [set-variables, deploy-macros, deploy-pipeline]
     env: 
       ENVIRONMENT: ${{ github.event.inputs.environment }}
       APP_NAME: ${{ needs.set-variables.outputs.app_name }}
