@@ -185,6 +185,16 @@ Resources:
         ECSClusterName: !GetAtt StackContainers.Outputs.ClusterName
         ECSServiceArn: !GetAtt StackContainers.Outputs.ServiceArn
       TimeoutInMinutes: 60
+  
+  StackQueues:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/queues/sqs.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        AppName: !Ref AppName
+        TaskRoleArn: !GetAtt StackContainers.Outputs.ECSTaskRoleArn
+      TimeoutInMinutes: 60
 
   
   

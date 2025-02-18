@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Creates SQS resources For P2P Project
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  AppName:
+    Type: String
+    Description: Project name
+  TaskRoleArn:
+    Type: String
+  
+Resources:
+  KMSQueues:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for queues
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id:
+          Fn::Sub: "${Environment}-${AppName}-kms"
+        Statement:
+        - Sid: Enable IAM User Permissions
+          Effect: Allow
+          Principal:
+            AWS:
+              Fn::Sub: arn:aws:iam::${AWS::AccountId}:root
+          Action: kms:*
+          Resource: "*"
+        - Sid: Allow access for Key Administrators
+          Effect: Allow
+          Principal:
+            AWS:
+              - !Ref TaskRoleArn
+          Action: sqs:*
+          Resource: "*"
+
+  SQSP2PTransaction:
+    Type: AWS::SQS::Queue
+    Description: SQS to handle the P2P transaction requests
+    Properties:
+      QueueName: !Sub "${Environment}_${AppName}_sqs_p2p_transactions"
+      KmsMasterKeyId: !GetAtt KMSQueues.KeyId
+      VisibilityTimeout: 90
+      RedrivePolicy:
+        maxReceiveCount: 2
+        deadLetterTargetArn: !GetAtt DQLP2PTransaction.Arn
+  DQLP2PTransaction:
+    Type: AWS::SQS::Queue
+    Description: Receives unprocessed messages from P2P transaction requests queue
+    Properties:
+      QueueName: !Sub "${Environment}_${AppName}_dlq_p2p_transactions"
+      KmsMasterKeyId: !GetAtt KMSQueues.KeyId
+      VisibilityTimeout: 1000
+  
+  SSMP2PTransactionQueue:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${Environment}/${AppName}/p2p/transaction-queue"
+      Tier: Standard
+      Type: String
+      Value: !GetAtt SQSP2PTransaction.Arn
+Outputs:
+  SQSP2PTransactionUrl:
+    Value: !Ref SQSP2PTransaction
+  DQLP2PTransactionUrl:
+    Value: !Ref DQLP2PTransaction
+  SQSP2PTransactionArn:
+    Value: !GetAtt SQSP2PTransaction.Arn
+  DQLP2PTransactionArn:
+    Value: !GetAtt DQLP2PTransaction.Arn
+  KMSKeyId:
+    Value: !GetAtt KMSQueues.KeyId
+  
