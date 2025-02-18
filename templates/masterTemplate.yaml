@@ -191,7 +191,7 @@ Resources:
     Properties:
       TemplateURL: !Sub 'https://{{resolve:ssm:/config/${EnvironmentName}/${AppName}/infra/bucket/artifacts}}.s3.${AWS::URLSuffix}/${AppName}/deploys/networking-db/infra/queues/sqs.yaml'
       Parameters:
-        EnvironmentName: !Ref EnvironmentName
+        Environment: !Ref EnvironmentName
         AppName: !Ref AppName
         TaskRoleArn: !GetAtt StackContainers.Outputs.ECSTaskRoleArn
       TimeoutInMinutes: 60
