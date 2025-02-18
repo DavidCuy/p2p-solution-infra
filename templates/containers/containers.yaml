@@ -28,6 +28,9 @@ Parameters:
     AllowedValues:
       - 'true'
       - 'false'
+  AllResources:
+    Type: String
+    Default: '*'
 
 Conditions:
   IsProd: !Equals
