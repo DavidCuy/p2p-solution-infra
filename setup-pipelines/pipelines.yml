@@ -115,20 +115,15 @@ Resources:
       EventPattern:
         source:
           - aws.s3
-        detail-type:
-          - 'AWS API Call via CloudTrail'
+        resources:
+          - !Sub "arn:aws:s3:::${S3CodePipelineArtifactStore}"
         detail:
-          eventSource:
-            - s3.amazonaws.com
-          eventName:
-            - CopyObject
+          object:
+            key:
+              - !Sub "${AppName}/deploys/networking-db/infra/${PrincipalTemplateZip}"
+          reason:
             - PutObject
             - CompleteMultipartUpload
-          requestParameters:
-            bucketName:
-              - !Ref S3CodePipelineArtifactStore
-            key:
-              - !Sub '${AppName}/deploys/networking-db/infra/${PrincipalTemplateZip}'
       Targets:
         -
           Arn:
@@ -245,57 +240,13 @@ Resources:
         RestrictPublicBuckets: true
       VersioningConfiguration:
         Status: Enabled
+      NotificationConfiguration:
+        EventBridgeConfiguration:
+          EventBridgeEnabled: true
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-  CloudTrailBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref CloudTrailBucket
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          -
-            Sid: AWSCloudTrailAclCheck
-            Effect: Allow
-            Principal:
-              Service:
-                - cloudtrail.amazonaws.com
-            Action: s3:GetBucketAcl
-            Resource: !GetAtt CloudTrailBucket.Arn
-          -
-            Sid: AWSCloudTrailWrite
-            Effect: Allow
-            Principal:
-              Service:
-                - cloudtrail.amazonaws.com
-            Action: s3:PutObject
-            Resource: !Join [ '', [ !GetAtt CloudTrailBucket.Arn, '/AWSLogs/', !Ref 'AWS::AccountId', '/*' ] ]
-            Condition: 
-              StringEquals:
-                s3:x-amz-acl: bucket-owner-full-control
-  CloudTrailBucket:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-  AwsCloudTrail:
-    DependsOn:
-      - CloudTrailBucketPolicy
-    Type: AWS::CloudTrail::Trail
-    Properties:
-      S3BucketName: !Ref CloudTrailBucket
-      EventSelectors:
-        -
-          DataResources:
-            -
-              Type: AWS::S3::Object
-              Values:
-                - !Join [ '', [ !GetAtt S3CodePipelineArtifactStore.Arn, '/', !Sub '${AppName}/deploys/networking-db/infra/${PrincipalTemplateZip}' ] ]
-          ReadWriteType: WriteOnly
-          IncludeManagementEvents: false
-      IncludeGlobalServiceEvents: true
-      IsLogging: true
-      IsMultiRegionTrail: true
   S3PoilicyCodePipelineArtifactStore:
     Type: 'AWS::S3::BucketPolicy'
     Properties:
@@ -388,13 +339,6 @@ Resources:
       Tier: Standard
       Type: String
       Value: !Ref S3CodePipelineArtifactStore
-  SSMBucketCloudtrailLogs:
-    Type: 'AWS::SSM::Parameter'
-    Properties:
-      Name: !Sub '/config/${EnvironmentName}/infra/bucket/cloudtrail'
-      Tier: Standard
-      Type: String
-      Value: !Ref CloudTrailBucket
   SSMAppNameName:
     Type: 'AWS::SSM::Parameter'
     Properties:
