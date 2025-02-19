@@ -126,7 +126,7 @@ Resources:
   ##############  Nat gateway associations  ##############
   'Fn::ForEach::NatGatewayRouteTableAssociations':
     - SubnetName
-    - !Ref PrivateSubnets
+    - !Ref PublicSubnets
     - 'NatGateway${SubnetName}RouteTableAssociation':
         Type: AWS::EC2::Route
         Properties:
