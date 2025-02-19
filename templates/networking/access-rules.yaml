@@ -122,17 +122,6 @@ Resources:
         Properties:
           SubnetId: !Sub '{{resolve:ssm:/config/infra/${EnvironmentName}/${AppName}/public_subnet/${SubnetName}}}'
           RouteTableId: !Ref PublicRouteTable
-  
-  ##############  Nat gateway associations  ##############
-  'Fn::ForEach::NatGatewayRouteTableAssociations':
-    - SubnetName
-    - !Ref PublicSubnets
-    - 'NatGateway${SubnetName}RouteTableAssociation':
-        Type: AWS::EC2::Route
-        Properties:
-          DestinationCidrBlock: 0.0.0.0/0
-          NatGatewayId: !Sub '{{resolve:ssm:/config/infra/${EnvironmentName}/${AppName}/nat_gateway/${SubnetName}}}'
-          RouteTableId: !Ref PrivateRouteTable
 
   SSMSecurityGroup:
     Type: AWS::SSM::Parameter
