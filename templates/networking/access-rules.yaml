@@ -40,10 +40,6 @@ Parameters:
     Type: String
     Default: "-"
   
-  EOInternetGateway:
-    Type: String
-    Default: "-"
-  
   VpcEnableS3Gateway:
     Type: String
     Description: Flag to create a vpc endpoint between nat gateway and s3
@@ -106,13 +102,6 @@ Resources:
       RouteTableId: !Ref PublicRouteTable
       DestinationIpv6CidrBlock: "::/0"
       GatewayId: !Ref InternetGateway
-  
-  EOInternetEgressAssociationIpv6:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationIpv6CidrBlock: "::/0"
-      GatewayId: !Ref EOInternetGateway
 
   ##############  Private subnet associations  ##############
   'Fn::ForEach::PrivateSubnetRouteTableAssociations':
@@ -133,6 +122,17 @@ Resources:
         Properties:
           SubnetId: !Sub '{{resolve:ssm:/config/infra/${EnvironmentName}/${AppName}/public_subnet/${SubnetName}}}'
           RouteTableId: !Ref PublicRouteTable
+  
+  ##############  Nat gateway associations  ##############
+  'Fn::ForEach::NatGatewayRouteTableAssociations':
+    - SubnetName
+    - !Ref PrivateSubnets
+    - 'NatGateway${SubnetName}RouteTableAssociation':
+        Type: AWS::EC2::Route
+        Properties:
+          DestinationCidrBlock: 0.0.0.0/0
+          NatGatewayId: !Sub '{{resolve:ssm:/config/infra/${EnvironmentName}/${AppName}/nat_gateway/${SubnetName}}}'
+          RouteTableId: !Ref PrivateRouteTable
 
   SSMSecurityGroup:
     Type: AWS::SSM::Parameter

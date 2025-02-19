@@ -4,7 +4,7 @@ description = "Despliegue de la infraestructura de p2p solution"
 
 [networking.config.vpc]
 names_for_private = 'A,B,C' # Use comma delimeter to separate names. Use max 3 elements
-names_for_public = 'A,B' #  Use comma delimeter to separate names. Use max 3 elements
+names_for_public = 'A' #  Use comma delimeter to separate names. Use max 3 elements
 enable_s3_gateway = 'true'
 [networking.config.vpc.dev]
 cidr = "10.43.0.0/16"

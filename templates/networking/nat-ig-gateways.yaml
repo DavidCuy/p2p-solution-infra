@@ -39,10 +39,49 @@ Resources:
       InternetGatewayId: !Ref InternetGateway
       VpcId: !Ref VPCID
   
-  EgressOnlyInternetGateway: 
-    Type: AWS::EC2::EgressOnlyInternetGateway
-    Properties: 
-        VpcId: !Ref VPCID
+  'Fn::ForEach::ElasticIPs':
+    - SubnetName
+    - !Ref PublicSubnets
+    - 'ElasticIP${SubnetName}':
+        Type: AWS::EC2::EIP
+        DependsOn: InternetGatewayAttachment
+        Properties:
+          Domain: vpc
+          Tags:
+            - Key: Name
+              Value: !Sub ${Name}-eip-${SubnetName}
+    
+  'Fn::ForEach::NatGateways':
+    - SubnetName
+    - !Ref PublicSubnets
+    - 'Fn::ForEach::GetAttLoop':
+      - Property
+      - [AllocationId]
+      - 'NatGateway${SubnetName}':
+          Type: AWS::EC2::NatGateway
+          Properties:
+            AllocationId: !GetAtt
+              - !Sub 'ElasticIP${SubnetName}'
+              - !Ref Property
+            SubnetId: !Sub '{{resolve:ssm:/config/infra/${EnvironmentName}/${AppName}/public_subnet/${SubnetName}}}'
+            Tags:
+              - Key: Name
+                Value: !Sub ${Name}-nat-${SubnetName}
+  
+  'Fn::ForEach::NatGatewayOutputSSM':
+    - SubnetName
+    - !Ref PublicSubnets
+    - 'Fn::ForEach::GetAttLoop':
+      - Property
+      - [NatGatewayId]
+      - 'SSM${Property}${SubnetName}':
+          Type: AWS::SSM::Parameter
+          Properties:
+            Name: !Sub "/config/infra/${EnvironmentName}/${AppName}/nat_gateway/${SubnetName}"
+            Type: String
+            Value: !GetAtt 
+              - !Sub 'NatGateway${SubnetName}'
+              - !Ref Property
 
 Outputs:
   StackName:
@@ -50,6 +89,4 @@ Outputs:
 
   InternetGateway:
     Value: !Ref InternetGateway
-  
-  EOInternetGateway:
-    Value: !Ref EgressOnlyInternetGateway
+
